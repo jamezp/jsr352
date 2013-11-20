@@ -19,21 +19,38 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import javax.naming.InitialContext;
+import javax.naming.NamingException;
+import javax.sql.DataSource;
 import javax.transaction.UserTransaction;
 
 import org.jberet.se._private.SEBatchLogger;
 import org.jberet.spi.ArtifactFactory;
 import org.jberet.spi.BatchEnvironment;
+import org.jberet.spi.Configuration;
+import org.jberet.spi.Configuration.RepositoryType;
+import org.jberet.spi.JdbcConfigurationBuilder;
 
 /**
  * Represents the Java SE batch runtime environment and its services.
  */
 public final class BatchSEEnvironment implements BatchEnvironment {
+    //keys used in jberet.properties
+    public static final String JOB_REPOSITORY_TYPE_KEY = "job-repository-type";
+    public static final String DDL_FILE_NAME_KEY = "ddl-file";
+    public static final String SQL_FILE_NAME_KEY = "sql-file";
+    public static final String DATASOURCE_JNDI_KEY = "datasource-jndi";
+    public static final String DB_URL_KEY = "db-url";
+    public static final String DB_USER_KEY = "db-user";
+    public static final String DB_PASSWORD_KEY = "db-password";
+    public static final String DB_PROPERTIES_KEY = "db-properties";
+    public static final String DB_PROPERTY_DELIM = ":";
+
     private static final ExecutorService executorService = Executors.newCachedThreadPool(new BatchThreadFactory());
 
     public static final String CONFIG_FILE_NAME = "jberet.properties";
 
-    private volatile Properties configProperties;
+    private volatile Configuration configuration;
 
     private final UserTransaction ut;
 
@@ -76,24 +93,24 @@ public final class BatchSEEnvironment implements BatchEnvironment {
     }
 
     @Override
-    public Properties getBatchConfigurationProperties() {
-        Properties result = configProperties;
+    public Configuration getBatchConfiguration() {
+        Configuration result = configuration;
         if (result == null) {
             synchronized (this) {
-                result = configProperties;
+                result = configuration;
                 if (result == null) {
-                    result = new Properties();
+                    final Properties configProperties = new Properties();
                     final InputStream configStream = getClassLoader().getResourceAsStream(CONFIG_FILE_NAME);
                     if (configStream != null) {
                         try {
-                            result.load(configStream);
+                            configProperties.load(configStream);
                         } catch (IOException e) {
                             throw SEBatchLogger.LOGGER.failToLoadConfig(e, CONFIG_FILE_NAME);
                         }
                     } else {
                         SEBatchLogger.LOGGER.useDefaultJBeretConfig(CONFIG_FILE_NAME);
                     }
-                    configProperties = result;
+                    result = configuration = Configuration.Factory.from(configProperties);
                 }
             }
         }

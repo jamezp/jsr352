@@ -15,7 +15,6 @@ package org.jberet.repository;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -29,9 +28,6 @@ import javax.batch.runtime.JobExecution;
 import javax.batch.runtime.JobInstance;
 import javax.batch.runtime.Metric;
 import javax.batch.runtime.StepExecution;
-import javax.naming.InitialContext;
-import javax.naming.NamingException;
-import javax.sql.DataSource;
 
 import com.google.common.base.Throwables;
 import org.jberet._private.BatchLogger;
@@ -40,25 +36,10 @@ import org.jberet.runtime.JobExecutionImpl;
 import org.jberet.runtime.JobInstanceImpl;
 import org.jberet.runtime.StepExecutionImpl;
 import org.jberet.spi.BatchEnvironment;
+import org.jberet.spi.JdbcConfiguration;
 import org.jberet.util.BatchUtil;
 
 public final class JdbcRepository extends AbstractRepository {
-    //keys used in jberet.properties
-    public static final String DDL_FILE_NAME_KEY = "ddl-file";
-    public static final String SQL_FILE_NAME_KEY = "sql-file";
-    public static final String DATASOURCE_JNDI_KEY = "datasource-jndi";
-    public static final String DB_URL_KEY = "db-url";
-    public static final String DB_USER_KEY = "db-user";
-    public static final String DB_PASSWORD_KEY = "db-password";
-    public static final String DB_PROPERTIES_KEY = "db-properties";
-    public static final String DB_PROPERTY_DELIM = ":";
-
-    //defaults for entries in jberet.properties
-    private static final String DEFAULT_DATASOURCE = "java:jboss/datasources/ExampleDS";
-    //    private static final String DEFAULT_DB_URL = "jdbc:h2:mem:test;DB_CLOSE_DELAY=-1";
-    private static final String DEFAULT_DB_URL = "jdbc:h2:~/jberet-repo";
-    private static final String DEFAULT_SQL_FILE = "sql/jberet-h2-sql.properties";
-    private static final String DEFAULT_DDL_FILE = "sql/jberet-h2.ddl";
 
     //keys used in *.sql files
     private static final String SELECT_ALL_JOB_INSTANCES = "select-all-job-instances";
@@ -144,13 +125,7 @@ public final class JdbcRepository extends AbstractRepository {
     }
 
     private static volatile JdbcRepository instance;
-    private Properties configProperties;
-    private String dataSourceName;
-    private DataSource dataSource;
-    private String dbUrl;
-    private String dbUser;
-    private String dbPassword;
-    private final Properties dbProperties;
+    private final JdbcConfiguration configuration;
     private final Properties sqls = new Properties();
 
     static JdbcRepository getInstance(final BatchEnvironment batchEnvironment) {
@@ -167,47 +142,8 @@ public final class JdbcRepository extends AbstractRepository {
     }
 
     private JdbcRepository(final BatchEnvironment batchEnvironment) {
-        configProperties = batchEnvironment.getBatchConfigurationProperties();
-        dataSourceName = configProperties.getProperty(DATASOURCE_JNDI_KEY);
-        dbUrl = configProperties.getProperty(DB_URL_KEY);
-        dbProperties = new Properties();
-
-        //if dataSourceName is configured, use dataSourceName;
-        //else if dbUrl is specified, use dbUrl;
-        //if neither is specified, use default dbUrl;
-        if (dataSourceName != null && !dataSourceName.isEmpty()) {
-            try {
-                dataSource = InitialContext.doLookup(dataSourceName);
-            } catch (NamingException e) {
-                throw BatchMessages.MESSAGES.failToLookupDataSource(e, dataSourceName);
-            }
-        } else {
-            if (dbUrl == null) {
-                dbUrl = DEFAULT_DB_URL;
-                dbUser = configProperties.getProperty(DB_USER_KEY);
-                if (dbUser != null) {
-                    dbProperties.setProperty("user", dbUser);
-                }
-                dbPassword = configProperties.getProperty(DB_PASSWORD_KEY);
-                if (dbPassword != null) {
-                    dbProperties.setProperty("password", dbPassword);
-                }
-                final String s = configProperties.getProperty(DB_PROPERTIES_KEY);
-                if (s != null) {
-                    final String[] ss = s.split(DB_PROPERTY_DELIM);
-                    for (final String kv : ss) {
-                        final int equalSign = kv.indexOf('=');
-                        if (equalSign > 0) {
-                            dbProperties.setProperty(kv.substring(0, equalSign), kv.substring(equalSign + 1));
-                        }
-                    }
-                }
-            }
-        }
-        String sqlFile = dbProperties.getProperty(SQL_FILE_NAME_KEY);
-        if (sqlFile == null || sqlFile.isEmpty()) {
-            sqlFile = DEFAULT_SQL_FILE;
-        }
+        configuration = (JdbcConfiguration) batchEnvironment.getBatchConfiguration();
+        final String sqlFile = configuration.getSqlFileName();
         final InputStream sqlResource = this.getClass().getClassLoader().getResourceAsStream(sqlFile);
         try {
             if (sqlResource == null) {
@@ -231,7 +167,7 @@ public final class JdbcRepository extends AbstractRepository {
     private void createTables() {
         //first test table existence by running a query
         final String getJobInstances = sqls.getProperty(SELECT_ALL_JOB_INSTANCES);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement getJobInstancesStatement = null;
         Statement batchDDLStatement = null;
         InputStream ddlResource = null;
@@ -239,12 +175,9 @@ public final class JdbcRepository extends AbstractRepository {
             getJobInstancesStatement = connection.prepareStatement(getJobInstances);
             getJobInstancesStatement.executeQuery();
         } catch (SQLException e) {
-            String ddlFile = configProperties.getProperty(DDL_FILE_NAME_KEY);
+            final String ddlFile = configuration.getDdlFileName();
             String ddlString = null;
             try {
-                if (ddlFile == null || ddlFile.isEmpty()) {
-                    ddlFile = DEFAULT_DDL_FILE;
-                }
                 ddlResource = this.getClass().getClassLoader().getResourceAsStream(ddlFile);
                 if (ddlResource == null) {
                     throw BatchMessages.MESSAGES.failToLoadDDL(ddlFile);
@@ -289,7 +222,7 @@ public final class JdbcRepository extends AbstractRepository {
     @Override
     void insertJobInstance(final JobInstanceImpl jobInstance) {
         final String insert = sqls.getProperty(INSERT_JOB_INSTANCE);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         try {
             preparedStatement = connection.prepareStatement(insert, Statement.RETURN_GENERATED_KEYS);
@@ -311,7 +244,7 @@ public final class JdbcRepository extends AbstractRepository {
     public List<JobInstance> getJobInstances(final String jobName) {
         final String select = (jobName == null) ? sqls.getProperty(SELECT_ALL_JOB_INSTANCES) :
                 sqls.getProperty(SELECT_JOB_INSTANCES_BY_JOB_NAME);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         final List<JobInstance> result = new ArrayList<JobInstance>();
         try {
@@ -353,7 +286,7 @@ public final class JdbcRepository extends AbstractRepository {
         }
 
         final String select = sqls.getProperty(SELECT_JOB_INSTANCE);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         try {
             preparedStatement = connection.prepareStatement(select);
@@ -380,7 +313,7 @@ public final class JdbcRepository extends AbstractRepository {
     @Override
     public int getJobInstanceCount(final String jobName) {
         final String select = sqls.getProperty(COUNT_JOB_INSTANCES_BY_JOB_NAME);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         int count = 0;
         try {
@@ -403,7 +336,7 @@ public final class JdbcRepository extends AbstractRepository {
     @Override
     void insertJobExecution(final JobExecutionImpl jobExecution) {
         final String insert = sqls.getProperty(INSERT_JOB_EXECUTION);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         try {
             preparedStatement = connection.prepareStatement(insert, Statement.RETURN_GENERATED_KEYS);
@@ -428,7 +361,7 @@ public final class JdbcRepository extends AbstractRepository {
     public void updateJobExecution(final JobExecution jobExecution) {
         super.updateJobExecution(jobExecution);
         final String update = sqls.getProperty(UPDATE_JOB_EXECUTION);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         try {
             preparedStatement = connection.prepareStatement(update);
@@ -453,7 +386,7 @@ public final class JdbcRepository extends AbstractRepository {
             return result;
         }
         final String select = sqls.getProperty(SELECT_JOB_EXECUTION);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         try {
             preparedStatement = connection.prepareStatement(select);
@@ -488,7 +421,7 @@ public final class JdbcRepository extends AbstractRepository {
             jobInstanceId = jobInstance.getInstanceId();
         }
 
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         final List<JobExecution> result = new ArrayList<JobExecution>();
         try {
@@ -528,7 +461,7 @@ public final class JdbcRepository extends AbstractRepository {
     @Override
     void insertStepExecution(final StepExecutionImpl stepExecution, final JobExecutionImpl jobExecution) {
         final String insert = sqls.getProperty(INSERT_STEP_EXECUTION);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         try {
             preparedStatement = connection.prepareStatement(insert, Statement.RETURN_GENERATED_KEYS);
@@ -551,7 +484,7 @@ public final class JdbcRepository extends AbstractRepository {
     @Override
     public void updateStepExecution(final StepExecution stepExecution) {
         final String update = sqls.getProperty(UPDATE_STEP_EXECUTION);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         final StepExecutionImpl stepExecutionImpl = (StepExecutionImpl) stepExecution;
         PreparedStatement preparedStatement = null;
         try {
@@ -596,7 +529,7 @@ public final class JdbcRepository extends AbstractRepository {
         } else {
             //stepExecutionId is for a partition execution, and should map to the PARTITION_EXECUTION table
             final String update = sqls.getProperty(UPDATE_PARTITION_EXECUTION);
-            final Connection connection = getConnection();
+            final Connection connection = configuration.getConnection();
             PreparedStatement preparedStatement = null;
             try {
                 preparedStatement = connection.prepareStatement(update);
@@ -623,7 +556,7 @@ public final class JdbcRepository extends AbstractRepository {
 
     StepExecution selectStepExecution(final long stepExecutionId) {
         final String select = sqls.getProperty(SELECT_STEP_EXECUTION);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         List<StepExecution> result = new ArrayList<StepExecution>();
         try {
@@ -647,7 +580,7 @@ public final class JdbcRepository extends AbstractRepository {
     List<StepExecution> selectStepExecutions(final Long jobExecutionId) {
         final String select = (jobExecutionId == null) ? sqls.getProperty(SELECT_ALL_STEP_EXECUTIONS) :
                 sqls.getProperty(SELECT_STEP_EXECUTIONS_BY_JOB_EXECUTION_ID);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         final List<StepExecution> result = new ArrayList<StepExecution>();
         try {
@@ -668,7 +601,7 @@ public final class JdbcRepository extends AbstractRepository {
     public void addPartitionExecution(final StepExecutionImpl enclosingStepExecution, final StepExecutionImpl partitionExecution) {
         super.addPartitionExecution(enclosingStepExecution, partitionExecution);
         final String insert = sqls.getProperty(INSERT_PARTITION_EXECUTION);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         try {
             preparedStatement = connection.prepareStatement(insert);
@@ -690,7 +623,7 @@ public final class JdbcRepository extends AbstractRepository {
             return result;
         }
         final String select = sqls.getProperty(FIND_ORIGINAL_STEP_EXECUTION);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         final List<StepExecution> results = new ArrayList<StepExecution>();
         PreparedStatement preparedStatement = null;
         try {
@@ -715,7 +648,7 @@ public final class JdbcRepository extends AbstractRepository {
             return result;
         }
         final String select = sqls.getProperty(SELECT_PARTITION_EXECUTIONS_BY_STEP_EXECUTION_ID);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         result = new ArrayList<StepExecutionImpl>();
         try {
@@ -777,7 +710,7 @@ public final class JdbcRepository extends AbstractRepository {
     @Override
     public int countStepStartTimes(final String stepName, final long jobInstanceId) {
         final String select = sqls.getProperty(COUNT_STEP_EXECUTIONS_BY_JOB_INSTANCE_ID);
-        final Connection connection = getConnection();
+        final Connection connection = configuration.getConnection();
         PreparedStatement preparedStatement = null;
         int count = 0;
         try {
@@ -796,22 +729,6 @@ public final class JdbcRepository extends AbstractRepository {
             close(connection, preparedStatement, null);
         }
         return count;
-    }
-
-    private Connection getConnection() {
-        if (dataSource != null) {
-            try {
-                return dataSource.getConnection();
-            } catch (SQLException e) {
-                throw BatchMessages.MESSAGES.failToObtainConnection(e, dataSource, dataSourceName);
-            }
-        } else {
-            try {
-                return DriverManager.getConnection(dbUrl, dbProperties);
-            } catch (Exception e) {
-                throw BatchMessages.MESSAGES.failToObtainConnection(e, dbUrl, dbProperties);
-            }
-        }
     }
 
     private void close(final Connection conn, final Statement stmt1, final Statement stmt2) {

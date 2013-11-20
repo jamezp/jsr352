@@ -24,6 +24,7 @@ import org.jberet.repository.JobRepository;
 import org.jberet.repository.JobRepositoryFactory;
 import org.jberet.spi.ArtifactFactory;
 import org.jberet.spi.BatchEnvironment;
+import org.jberet.spi.Configuration;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -65,10 +66,9 @@ public class JobRepositoryTest {
             }
 
             @Override
-            public Properties getBatchConfigurationProperties() {
+            public Configuration getBatchConfiguration() {
                 final Properties props = new Properties();
-                //props.setProperty(JobRepositoryFactory.JOB_REPOSITORY_TYPE_KEY, JobRepositoryFactory.REPOSITORY_TYPE_JDBC);
-                return props;
+                return Configuration.Factory.from(props);
             }
         };
         repo = JobRepositoryFactory.getJobRepository(batchEnvironment);

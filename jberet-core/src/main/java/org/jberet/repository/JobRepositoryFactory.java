@@ -16,27 +16,25 @@ import java.util.Properties;
 
 import org.jberet._private.BatchMessages;
 import org.jberet.spi.BatchEnvironment;
+import org.jberet.spi.Configuration;
+import org.jberet.spi.Configuration.RepositoryType;
 
 public final class JobRepositoryFactory {
-    public static final String JOB_REPOSITORY_TYPE_KEY = "job-repository-type";
-    public static final String REPOSITORY_TYPE_IN_MEMORY = "in-memory";
-    public static final String REPOSITORY_TYPE_JDBC = "jdbc";
 
     private JobRepositoryFactory() {
     }
 
     public static JobRepository getJobRepository(final BatchEnvironment batchEnvironment) {
-        String repositoryType = null;
+        RepositoryType repositoryType = null;
         if (batchEnvironment != null) {
-            final Properties configProperties = batchEnvironment.getBatchConfigurationProperties();
-            repositoryType = configProperties.getProperty(JOB_REPOSITORY_TYPE_KEY);
+            repositoryType = batchEnvironment.getBatchConfiguration().getRepositoryType();
         }
-        if (repositoryType == null || repositoryType.isEmpty() || repositoryType.equals(REPOSITORY_TYPE_JDBC)) {
+        if (repositoryType == null || repositoryType == RepositoryType.JDBC) {
             return JdbcRepository.getInstance(batchEnvironment);
-        } else if (repositoryType.equals(REPOSITORY_TYPE_IN_MEMORY)) {
+        } else if (repositoryType == RepositoryType.IN_MEMORY) {
             return InMemoryRepository.getInstance(batchEnvironment);
         } else {
-            throw BatchMessages.MESSAGES.unrecognizedJobRepositoryType(repositoryType);
+            throw BatchMessages.MESSAGES.unrecognizedJobRepositoryType(repositoryType.toString());
         }
     }
 }

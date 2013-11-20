@@ -79,5 +79,5 @@ public interface BatchEnvironment {
      * Gets configuration data for batch container.
      * @return a key-value map of batch configuration
      */
-    Properties getBatchConfigurationProperties();
+    Configuration getBatchConfiguration();
 }

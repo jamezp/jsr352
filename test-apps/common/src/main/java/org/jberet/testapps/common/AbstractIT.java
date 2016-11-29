@@ -24,6 +24,7 @@ import javax.batch.runtime.Metric;
 import javax.batch.runtime.StepExecution;
 
 import org.jberet.job.model.Job;
+import org.jberet.operations.DelegatingJobOperator;
 import org.jberet.operations.JobOperatorImpl;
 import org.jberet.runtime.JobExecutionImpl;
 import org.jberet.runtime.StepExecutionImpl;
@@ -65,7 +66,8 @@ abstract public class AbstractIT {
     @Before
     public void before() throws Exception {
         if (jobOperator == null) {
-            jobOperator = (JobOperatorImpl) BatchRuntime.getJobOperator();
+            // TODO (jrp) think of a cleaner way to accomplish this
+            jobOperator = (JobOperatorImpl) ((DelegatingJobOperator) BatchRuntime.getJobOperator()).getDelegate();
         }
     }
 

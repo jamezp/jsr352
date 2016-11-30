@@ -19,9 +19,15 @@ import org.jberet.util.Assertions;
  *
  * @author <a href="mailto:jperkins@redhat.com">James R. Perkins</a>
  */
+@SuppressWarnings("unused")
 public abstract class JobOperatorContext {
 
-    private static volatile JobOperatorContextSelector selector = new DefaultJobOperatorContextSelector();
+    private static volatile JobOperatorContextSelector SELECTOR = null;
+
+    private static class DefaultHolder {
+        // Used to lazy-load, in some cases there may not be a BatchEnvironment service implementation
+        static final JobOperatorContextSelector DEFAULT = new DefaultJobOperatorContextSelector();
+    }
 
     /**
      * Returns the current context based on the selector.
@@ -29,6 +35,10 @@ public abstract class JobOperatorContext {
      * @return the current context
      */
     public static JobOperatorContext getJobOperatorContext() {
+        JobOperatorContextSelector selector = SELECTOR;
+        if (selector == null) {
+            selector = DefaultHolder.DEFAULT;
+        }
         return selector.getJobOperatorContext();
     }
 
@@ -72,7 +82,7 @@ public abstract class JobOperatorContext {
      * @param selector the selector to use
      */
     public static void setJobOperatorContextSelector(final JobOperatorContextSelector selector) {
-        JobOperatorContext.selector = Assertions.notNull(selector, "selector");
+        SELECTOR = Assertions.notNull(selector, "selector");
     }
 
     /**

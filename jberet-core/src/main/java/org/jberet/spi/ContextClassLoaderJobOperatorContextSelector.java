@@ -14,6 +14,7 @@ import java.security.PrivilegedAction;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import org.jberet._private.BatchMessages;
 import org.jberet.util.Assertions;
 import org.wildfly.security.manager.WildFlySecurityManager;
 
@@ -24,6 +25,7 @@ import org.wildfly.security.manager.WildFlySecurityManager;
  *
  * @author <a href="mailto:jperkins@redhat.com">James R. Perkins</a>
  */
+@SuppressWarnings("unused")
 public class ContextClassLoaderJobOperatorContextSelector implements JobOperatorContextSelector {
     private final JobOperatorContextSelector defaultSelector;
     private final ConcurrentMap<ClassLoader, JobOperatorContext> contexts = new ConcurrentHashMap<>();
@@ -43,6 +45,7 @@ public class ContextClassLoaderJobOperatorContextSelector implements JobOperator
 
     /**
      * Creates a new selector.
+     *
      * @param defaultSelector the default selector, cannot be null
      */
     public ContextClassLoaderJobOperatorContextSelector(final JobOperatorContextSelector defaultSelector) {
@@ -57,13 +60,40 @@ public class ContextClassLoaderJobOperatorContextSelector implements JobOperator
         return action.run();
     }
 
+    /**
+     * Registers a context with the class loader.
+     *
+     * @param classLoader the class loader to register the context with
+     * @param context     the context that should be used on the class loader
+     */
     public void registerContext(final ClassLoader classLoader, final JobOperatorContext context) {
-
         if (contexts.putIfAbsent(classLoader, context) != null) {
-            // TODO (jrp) throw some kind of exception
+            // Don't allow a duplicate to be registered
+            throw BatchMessages.MESSAGES.classLoaderAlreadyRegistered(classLoader);
         }
     }
 
+    /**
+     * Attempts to remove the context registered for the class loader. If the class loader does not have a registered
+     * context {@code null} will be returned.
+     *
+     * @param classLoader the class loader to remove the context for
+     *
+     * @return the removed context or {@code null} if the class loader did not have a registered context
+     */
+    public JobOperatorContext unregisterContext(final ClassLoader classLoader) {
+        return contexts.remove(classLoader);
+    }
+
+    /**
+     * Attempts to remove the specific context registered for the class loader. If the context is not registered with
+     * the specified context {@code false} will be returned.
+     *
+     * @param classLoader the class loader to remove the context for
+     * @param context     the context which should be removed
+     *
+     * @return {@code true} if the context was removed, otherwise {@code false}
+     */
     public boolean unregisterContext(final ClassLoader classLoader, final JobOperatorContext context) {
         return contexts.remove(classLoader, context);
     }

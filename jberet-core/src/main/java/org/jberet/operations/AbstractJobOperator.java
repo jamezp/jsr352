@@ -51,29 +51,34 @@ import org.jberet.runtime.runner.JobExecutionRunner;
 import org.jberet.spi.BatchEnvironment;
 import org.jberet.spi.PropertyKey;
 
+/**
+ * An abstract implementation of a {@link JobOperator}. Subclasses should generally delegate to the super methods of
+ * this abstraction.
+ *
+ * @author Cheng Fang - Initial API and implementation
+ * @author <a href="mailto:jperkins@redhat.com">James R. Perkins</a>
+ */
 public abstract class AbstractJobOperator implements JobOperator {
 
-    public enum SecurityAction {
-        READ,
-        START,
-        STOP,
-        RESTART,
-        ABANDON
-    }
-
+    /**
+     * Returns the batch environment that should be used for this JobOperator. Implementations should never return
+     * {@code null}.
+     *
+     * @return the batch environment
+     */
     protected abstract BatchEnvironment getBatchEnvironment();
 
-    protected void securityCheck(final SecurityAction action) throws JobSecurityException {
-        // Do nothing by default
-    }
-
+    /**
+     * This is equivalent to {@link #getBatchEnvironment()#getJobRepository() getBatchEnvironment().getJobRepository()}.
+     *
+     * @return the job repository that belongs to the batch environment
+     */
     protected JobRepository getJobRepository() {
         return getBatchEnvironment().getJobRepository();
     }
 
     @Override
     public long start(final String jobXMLName, final Properties jobParameters) throws JobStartException, JobSecurityException {
-        securityCheck(SecurityAction.START);
         final BatchEnvironment batchEnvironment = getBatchEnvironment();
         final Job jobDefined = ArchiveXmlLoader.loadJobXml(jobXMLName, batchEnvironment.getClassLoader(),
                 new ArrayList<Job>(), batchEnvironment.getJobXmlResolver());
@@ -94,7 +99,6 @@ public abstract class AbstractJobOperator implements JobOperator {
      * @since 1.2.0
      */
     public long start(final Job jobDefined, final Properties jobParameters) throws JobStartException, JobSecurityException {
-        securityCheck(SecurityAction.START);
         final BatchEnvironment batchEnvironment = getBatchEnvironment();
         final ClassLoader classLoader = batchEnvironment.getClassLoader();
         final String applicationName = getApplicationName();
@@ -107,9 +111,7 @@ public abstract class AbstractJobOperator implements JobOperator {
                     return startJobExecution(jobInstance, jobParameters, null);
                 }
             });
-        } catch (InvalidTransactionException e) {
-            throw new JobStartException(e);
-        } catch (SystemException e) {
+        } catch (InvalidTransactionException | SystemException e) {
             throw new JobStartException(e);
         }
     }
@@ -117,8 +119,7 @@ public abstract class AbstractJobOperator implements JobOperator {
     @Override
     public void stop(final long executionId) throws NoSuchJobExecutionException,
             JobExecutionNotRunningException, JobSecurityException {
-        securityCheck(SecurityAction.STOP);
-        final JobExecutionImpl jobExecution = (JobExecutionImpl) getJobExecution(executionId);
+        final JobExecutionImpl jobExecution = getJobExecutionImpl(executionId);
         final BatchStatus s = jobExecution.getBatchStatus();
         if (s == BatchStatus.STOPPED || s == BatchStatus.FAILED || s == BatchStatus.ABANDONED ||
                 s == BatchStatus.COMPLETED) {
@@ -133,7 +134,6 @@ public abstract class AbstractJobOperator implements JobOperator {
 
     @Override
     public Set<String> getJobNames() throws JobSecurityException {
-        securityCheck(SecurityAction.READ);
         return getJobRepository().getJobNames();
     }
 
@@ -142,7 +142,6 @@ public abstract class AbstractJobOperator implements JobOperator {
         if (jobName == null) {
             throw MESSAGES.noSuchJobException(null);
         }
-        securityCheck(SecurityAction.READ);
         final JobRepository repository = getJobRepository();
         final int count = repository.getJobInstanceCount(jobName);
         if (count == 0 && !repository.jobExists(jobName)) {
@@ -156,7 +155,6 @@ public abstract class AbstractJobOperator implements JobOperator {
         if (jobName == null) {
             throw MESSAGES.noSuchJobException(null);
         }
-        securityCheck(SecurityAction.READ);
         final JobRepository repository = getJobRepository();
         final List<JobInstance> instances = repository.getJobInstances(jobName);
         final int size = instances.size();
@@ -171,10 +169,9 @@ public abstract class AbstractJobOperator implements JobOperator {
         if (jobName == null) {
             throw MESSAGES.noSuchJobException(null);
         }
-        securityCheck(SecurityAction.READ);
         final JobRepository repository = getJobRepository();
         final List<Long> result = repository.getRunningExecutions(jobName);
-        if (result.size() == 0 && !repository.jobExists(jobName)) {
+        if (result.isEmpty() && !repository.jobExists(jobName)) {
             throw MESSAGES.noSuchJobException(jobName);
         }
         return result;
@@ -182,15 +179,13 @@ public abstract class AbstractJobOperator implements JobOperator {
 
     @Override
     public Properties getParameters(final long executionId) throws NoSuchJobExecutionException, JobSecurityException {
-        securityCheck(SecurityAction.READ);
-        return getJobExecution(executionId).getJobParameters();
+        return getJobExecutionImpl(executionId).getJobParameters();
     }
 
     @Override
     public long restart(final long executionId, final Properties restartParameters) throws JobExecutionAlreadyCompleteException,
             NoSuchJobExecutionException, JobExecutionNotMostRecentException, JobRestartException, JobSecurityException {
-        securityCheck(SecurityAction.RESTART);
-        final JobExecutionImpl originalToRestart = (JobExecutionImpl) getJobExecution(executionId);
+        final JobExecutionImpl originalToRestart = getJobExecutionImpl(executionId);
 
         if (Job.UNRESTARTABLE.equals(originalToRestart.getRestartPosition())) {
             throw MESSAGES.unrestartableJob(originalToRestart.getJobName(), executionId);
@@ -233,8 +228,7 @@ public abstract class AbstractJobOperator implements JobOperator {
     @Override
     public void abandon(final long executionId) throws
             NoSuchJobExecutionException, JobExecutionIsRunningException, JobSecurityException {
-        securityCheck(SecurityAction.ABANDON);
-        final JobExecutionImpl jobExecution = (JobExecutionImpl) getJobExecution(executionId);
+        final JobExecutionImpl jobExecution = getJobExecutionImpl(executionId);
         final BatchStatus batchStatus = jobExecution.getBatchStatus();
         if (batchStatus == BatchStatus.COMPLETED ||
                 batchStatus == BatchStatus.FAILED ||
@@ -254,40 +248,49 @@ public abstract class AbstractJobOperator implements JobOperator {
 
     @Override
     public JobInstance getJobInstance(final long executionId) throws NoSuchJobExecutionException, JobSecurityException {
-        securityCheck(SecurityAction.READ);
-        final JobExecutionImpl jobExecution = (JobExecutionImpl) getJobExecution(executionId);
+        final JobExecutionImpl jobExecution = getJobExecutionImpl(executionId);
         return jobExecution.getJobInstance();
     }
 
     @Override
     public List<JobExecution> getJobExecutions(final JobInstance instance) throws
             NoSuchJobInstanceException, JobSecurityException {
-        securityCheck(SecurityAction.READ);
         return getJobRepository().getJobExecutions(instance);
     }
 
     @Override
     public JobExecution getJobExecution(final long executionId) throws NoSuchJobExecutionException, JobSecurityException {
-        securityCheck(SecurityAction.READ);
-        final JobExecution jobExecution = getJobRepository().getJobExecution(executionId);
-        if (jobExecution == null) {
-            throw MESSAGES.noSuchJobExecution(executionId);
-        }
-        return jobExecution;
+        return getJobExecutionImpl(executionId);
     }
 
     @Override
     public List<StepExecution> getStepExecutions(final long jobExecutionId) throws
             NoSuchJobExecutionException, JobSecurityException {
-        securityCheck(SecurityAction.READ);
         final List<StepExecution> stepExecutions = getJobRepository().getStepExecutions(jobExecutionId, getBatchEnvironment().getClassLoader());
         if (stepExecutions.isEmpty()) {
             //check if the jobExecutionId passed in points to a valid JobExecution
             //since no step executions under this jobExecutionId was found, it's likely this job execution may not exist
-            //getJobExecution() call will throw NoSuchJobExecutionException for non-exist jobExecutionId.
-            getJobExecution(jobExecutionId);
+            //getJobExecutionImpl() call will throw NoSuchJobExecutionException for non-exist jobExecutionId.
+            getJobExecutionImpl(jobExecutionId);
         }
         return stepExecutions;
+    }
+
+    /**
+     * Returns the job execution implementation found in the job repository.
+     *
+     * @param executionId the execution id
+     *
+     * @return the job execution implementation
+     *
+     * @throws NoSuchJobExecutionException if the job was not found in the repository
+     */
+    private JobExecutionImpl getJobExecutionImpl(final long executionId) throws NoSuchJobExecutionException {
+        final JobExecutionImpl jobExecution = (JobExecutionImpl) getJobRepository().getJobExecution(executionId);
+        if (jobExecution == null) {
+            throw MESSAGES.noSuchJobExecution(executionId);
+        }
+        return jobExecution;
     }
 
     /**
@@ -373,7 +376,6 @@ public abstract class AbstractJobOperator implements JobOperator {
         final BatchEnvironment batchEnvironment = getBatchEnvironment();
         final JobRepository repository = getJobRepository();
         final JobExecutionImpl jobExecution = repository.createJobExecution(jobInstance, jobParameters);
-        // TODO (jrp) check the on any issues creating a new ArtifactFactoryWrapper for each start.
         final JobContextImpl jobContext = new JobContextImpl(jobExecution, originalToRestart, new ArtifactFactoryWrapper(batchEnvironment.getArtifactFactory()), repository, batchEnvironment);
 
         final JobExecutionRunner jobExecutionRunner = new JobExecutionRunner(jobContext);
